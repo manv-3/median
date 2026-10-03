@@ -39,8 +39,7 @@ describe('runAgy', () => {
 
         expect(execaMock).toHaveBeenCalledWith('agy', [
             '--print', 'my prompt',
-            '--output-format', 'json',
-            '--dangerously-skip-permissions'
+            '--output-format', 'text'
         ], { timeout: 120000 });
         expect(result).toStrictEqual({
             stdout: 'success output',

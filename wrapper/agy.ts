@@ -10,16 +10,20 @@ export function classifyFailure(err: any): 'environment' | 'timeout' | 'code_bug
         return 'environment';
     }
 
-    // Handle cases where the executable was found but a "command not found" error was nested
-    if (err.message && (
-        err.message.toLowerCase().includes('command not found') ||
-        err.message.toLowerCase().includes('is not recognized')
-    )) {
+    if (
+        err.message &&
+        (
+            err.message.toLowerCase().includes('command not found') ||
+            err.message.toLowerCase().includes('is not recognized')
+        )
+    ) {
         return 'environment';
     }
 
-    // Also check stderr for Windows shell errors
-    if (err.stderr && err.stderr.toLowerCase().includes('is not recognized')) {
+    if (
+        err.stderr &&
+        err.stderr.toLowerCase().includes('is not recognized')
+    ) {
         return 'environment';
     }
 
@@ -28,21 +32,18 @@ export function classifyFailure(err: any): 'environment' | 'timeout' | 'code_bug
 
 export async function runAgy(prompt: string): Promise<AgyResult> {
     try {
-        const { stdout, stderr, exitCode } = await execa('agy', [
-            '--print', prompt,
-            '--output-format', 'json',
-            '--dangerously-skip-permissions'
-        ], {
-            timeout: 120000
-        });
+        const { stdout, stderr, exitCode } = await execa(
+            'agy',
+            ['--print', prompt, '--output-format', 'text'],
+            {
+                timeout: 120000
+            }
+        );
 
         return {
             stdout,
             stderr,
-            exitCode: exitCode ?? 0,
-            // If execa doesn't throw, it's successful execution.
-            // But if there is a non-zero exit code but execa was configured NOT to throw on error,
-            // we'd handle it here. By default execa throws on non-zero exit code.
+            exitCode: exitCode ?? 0
         };
     } catch (err: any) {
         return {

@@ -25,11 +25,11 @@
   },
   "homepage": "https://github.com/manv-3/median#readme",
   "dependencies": {
-    "@types/node": "^26.6.3",
     "execa": "^10.0.1",
     "typescript": "^7.0.2"
   },
   "devDependencies": {
+    "@types/node": "^26.6.4",
     "tsx": "^4.23.15",
     "vitest": "^5.0.3"
   },
