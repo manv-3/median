@@ -9,5 +9,5 @@
     "forceConsistentCasingInFileNames": true,
     "outDir": "dist"
   },
-  "include": ["wrapper/**/*", "types/**/*", "decision/**/*", "bench/**/*"]
+  "include": ["src/**/*", "bin/**/*", "wrapper/**/*", "types/**/*", "decision/**/*", "bench/**/*"]
 }

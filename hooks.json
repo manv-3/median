@@ -1,0 +1,11 @@
+{
+  "median-quality-gate": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node ./dist/bin/hook.js",
+        "timeout": 60
+      }
+    ]
+  }
+}
