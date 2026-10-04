@@ -102,6 +102,30 @@ npm run download:model -- --list      # View all available model variants
 ### Auto-Discovery
 When Median's plugin hook triggers, it automatically probes `http://127.0.0.1:8000/health`. If the server is active, it queries `http://127.0.0.1:8000/v1/systemone` using single forward-pass probability scoring (`noul`). If the daemon is inactive, Median safely falls back to Tier 0 mechanical checks without blocking agent execution.
 
+### Using Other Decision Models (OpenJev, Laya, or Custom)
+
+Median is not locked to Clef-Flash. Because Median communicates over the standard **System One protocol**, any model that speaks the System One `noul` schema can serve as the Tier 1 judge:
+
+| Model | Compatibility | Context Capacity | Notes |
+| :--- | :---: | :---: | :--- |
+| **Cloudflare Clef-Flash (Default)** | Native | 65,536 tokens | Best overall (fast, large context, local GGUF or edge). |
+| **OpenJev** | Native | ~8,192 tokens | Compatible with System One HTTP endpoint. |
+| **Laya (`@receptron/laya`)** | Native | **~512 tokens** ⚠️ | Works over HTTP, but large git diffs (>50 lines) will be truncated. |
+| **Custom System One Service** | Native | Custom | Any service accepting `{ state, questions }` and returning `noul`. |
+
+#### How to Connect an Alternative Model:
+Export `CLEF_ENDPOINT` to point Median to your server:
+```bash
+# Point Median to your OpenJev server:
+export CLEF_ENDPOINT="http://localhost:8000/v1/systemone"
+
+# Or point Median to your Laya server:
+export CLEF_ENDPOINT="http://localhost:5000/v1/systemone"
+```
+
+#### Fail-Safe Fallback:
+If your alternative decision model server ever times out, crashes, or returns an error, Median **never crashes or blocks your agent**. It logs an informational notice and **gracefully falls back to Tier 0 mechanical checks** (`npm run build`, `npm test`, `tsc --noEmit`), guaranteeing that your project always compiles and passes tests before completion.
+
 ---
 
 ## Quick Start: Installing the Plugin
