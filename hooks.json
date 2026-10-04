@@ -1,9 +1,16 @@
 {
   "median-quality-gate": {
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "node ./dist/bin/hook.js --event PostInvocation",
+        "timeout": 15
+      }
+    ],
     "Stop": [
       {
         "type": "command",
-        "command": "node ./dist/bin/hook.js",
+        "command": "node ./dist/bin/hook.js --event Stop",
         "timeout": 60
       }
     ]

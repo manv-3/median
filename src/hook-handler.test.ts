@@ -1,19 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleStopHook, MAX_HOOK_ITERATIONS } from './hook-handler.js';
+import { handleStopHook, handlePostInvocationHook, MAX_HOOK_ITERATIONS } from './hook-handler.js';
 import * as checksModule from './checks.js';
 import * as transcriptModule from './transcript.js';
 
 vi.mock('./checks.js', () => ({
     runChecks: vi.fn(),
-    getWorkspaceDiff: vi.fn()
+    getWorkspaceDiff: vi.fn(),
+    runFastCompileCheck: vi.fn()
 }));
 
 vi.mock('./transcript.js', () => ({
-    extractGoalFromTranscript: vi.fn()
+    extractGoalFromTranscript: vi.fn(),
+    extractActiveProjectFromTranscript: vi.fn()
 }));
 
 const mockRunChecks = checksModule.runChecks as unknown as ReturnType<typeof vi.fn>;
 const mockGetWorkspaceDiff = checksModule.getWorkspaceDiff as unknown as ReturnType<typeof vi.fn>;
+const mockRunFastCompileCheck = checksModule.runFastCompileCheck as unknown as ReturnType<typeof vi.fn>;
 const mockExtractGoal = transcriptModule.extractGoalFromTranscript as unknown as ReturnType<typeof vi.fn>;
 
 describe('handleStopHook', () => {
@@ -126,3 +129,47 @@ describe('handleStopHook', () => {
         expect(response.reason).toContain('prompt flag');
     });
 });
+
+describe('handlePostInvocationHook', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('returns empty object when no diff exists (no changes made)', async () => {
+        mockGetWorkspaceDiff.mockResolvedValueOnce('');
+        const response = await handlePostInvocationHook({
+            invocationNum: 1,
+            workspacePaths: ['/home/ms/median']
+        });
+        expect(response).toEqual({});
+    });
+
+    it('returns empty object when compile check passes cleanly', async () => {
+        mockGetWorkspaceDiff.mockResolvedValueOnce('diff --git a/test.ts');
+        mockRunFastCompileCheck.mockResolvedValueOnce({ ok: true, errors: [] });
+
+        const response = await handlePostInvocationHook({
+            invocationNum: 1,
+            workspacePaths: ['/home/ms/median']
+        });
+        expect(response).toEqual({});
+    });
+
+    it('injects ephemeral message and forces continue when compile error occurs', async () => {
+        mockGetWorkspaceDiff.mockResolvedValueOnce('diff --git a/test.ts');
+        mockRunFastCompileCheck.mockResolvedValueOnce({
+            ok: false,
+            errors: ["src/test.ts(10,5): error TS2322: Type 'number' is not assignable to type 'string'."]
+        });
+
+        const response = await handlePostInvocationHook({
+            invocationNum: 1,
+            workspacePaths: ['/home/ms/median']
+        });
+
+        expect(response.terminationBehavior).toBe('force_continue');
+        expect(response.injectSteps?.[0]?.ephemeralMessage).toContain('TypeScript compilation errors detected');
+        expect(response.injectSteps?.[0]?.ephemeralMessage).toContain('TS2322');
+    });
+});
+

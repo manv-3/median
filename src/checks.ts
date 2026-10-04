@@ -178,3 +178,28 @@ export async function runChecks(cwd: string = process.cwd()): Promise<Checks> {
         typeErrors
     };
 }
+
+export async function runFastCompileCheck(cwd: string = process.cwd()): Promise<{ ok: boolean; errors: string[] }> {
+    const tsconfigPath = path.join(cwd, 'tsconfig.json');
+    if (!(await fileExists(tsconfigPath))) {
+        return { ok: true, errors: [] };
+    }
+
+    try {
+        await execa('npx', ['tsc', '--noEmit'], { cwd });
+        return { ok: true, errors: [] };
+    } catch (err: any) {
+        const output = `${err.stdout || ''}\n${err.stderr || ''}`;
+        const errorLines = output
+            .split('\n')
+            .map(l => l.trim())
+            .filter(l => /error TS\d+:/i.test(l))
+            .slice(0, 5);
+
+        return {
+            ok: false,
+            errors: errorLines.length > 0 ? errorLines : [output.slice(0, 300).trim()]
+        };
+    }
+}
+

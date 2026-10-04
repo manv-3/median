@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /// <reference types="node" />
-import { handleStopHook, StopHookPayload } from '../src/hook-handler.js';
+import {
+    handleStopHook,
+    handlePostInvocationHook,
+    StopHookPayload,
+    PostInvocationPayload
+} from '../src/hook-handler.js';
 
 async function main() {
     let inputData = '';
@@ -10,7 +15,7 @@ async function main() {
         inputData += chunk;
     }
 
-    let payload: StopHookPayload = {};
+    let payload: any = {};
     if (inputData.trim()) {
         try {
             payload = JSON.parse(inputData);
@@ -19,15 +24,29 @@ async function main() {
         }
     }
 
-    const response = await handleStopHook(payload);
-    process.stdout.write(JSON.stringify(response));
+    const isPostInvocation = process.argv.includes('PostInvocation') ||
+                             process.argv.includes('--early') ||
+                             ('invocationNum' in payload);
+
+    if (isPostInvocation) {
+        const response = await handlePostInvocationHook(payload as PostInvocationPayload);
+        process.stdout.write(JSON.stringify(response));
+    } else {
+        const response = await handleStopHook(payload as StopHookPayload);
+        process.stdout.write(JSON.stringify(response));
+    }
 }
 
 main().catch(err => {
     // If an error occurs in the hook itself, fallback gracefully so the agent is not blocked
-    process.stdout.write(JSON.stringify({
-        decision: 'allow',
-        reason: `Median hook error: ${err.message || String(err)}`
-    }));
+    const isPostInvocation = process.argv.includes('PostInvocation') || process.argv.includes('--early');
+    if (isPostInvocation) {
+        process.stdout.write(JSON.stringify({}));
+    } else {
+        process.stdout.write(JSON.stringify({
+            decision: 'allow',
+            reason: `Median hook error: ${err.message || String(err)}`
+        }));
+    }
     process.exit(0);
 });

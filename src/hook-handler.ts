@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execa } from 'execa';
 import { extractGoalFromTranscript, extractActiveProjectFromTranscript } from './transcript.js';
-import { runChecks, getWorkspaceDiff } from './checks.js';
+import { runChecks, getWorkspaceDiff, runFastCompileCheck } from './checks.js';
 import { evaluateTier0 } from '../decision/tier0.js';
 import { tier1Judge } from '../decision/tier1.js';
 import type { StatePayload } from '../types/index.js';
@@ -23,6 +23,24 @@ export interface StopHookPayload {
 export interface StopHookResponse {
     decision: 'continue' | 'allow';
     reason?: string;
+}
+
+export interface PostInvocationPayload {
+    invocationNum?: number;
+    initialNumSteps?: number;
+    conversationId?: string;
+    workspacePaths?: string[];
+    transcriptPath?: string;
+    artifactDirectoryPath?: string;
+    modelName?: string;
+}
+
+export interface PostInvocationResponse {
+    injectSteps?: Array<{
+        ephemeralMessage?: string;
+        userMessage?: string;
+    }>;
+    terminationBehavior?: 'force_continue' | 'terminate' | '';
 }
 
 export const MAX_HOOK_ITERATIONS = 4;
@@ -192,3 +210,46 @@ export async function handleStopHook(payload: StopHookPayload): Promise<StopHook
         reason: `[Median Quality Gate Failed - Attempt ${iteration}/${MAX_HOOK_ITERATIONS}]\n${instruction}\nPlease correct the code and ensure all tests pass before completing.`
     };
 }
+
+/**
+ * Early verification hook running on PostInvocation.
+ * Catches TypeScript compilation / syntax errors immediately after tool edits.
+ * Consumes 0 tokens when edits compile cleanly.
+ */
+export async function handlePostInvocationHook(
+    payload: PostInvocationPayload
+): Promise<PostInvocationResponse> {
+    if (process.env.MEDIAN_DISABLED === '1') {
+        return {};
+    }
+
+    const rawWorkspace = payload.workspacePaths?.[0] || process.cwd();
+    const targetDir = await resolveTargetWorkspace(rawWorkspace, payload.transcriptPath);
+
+    if (await pathExists(path.join(targetDir, '.nomedian'))) {
+        return {};
+    }
+
+    // Only run if changes were made in this workspace
+    const diff = await getWorkspaceDiff(targetDir);
+    if (!diff.trim()) {
+        return {};
+    }
+
+    // Run fast compiler / typecheck (< 400ms)
+    const compileResult = await runFastCompileCheck(targetDir);
+    if (!compileResult.ok) {
+        const errorSummary = compileResult.errors.join('\n');
+        return {
+            injectSteps: [
+                {
+                    ephemeralMessage: `Median Early Quality Gate: TypeScript compilation errors detected after recent edit:\n${errorSummary}\nPlease fix these compilation errors before proceeding.`
+                }
+            ],
+            terminationBehavior: 'force_continue'
+        };
+    }
+
+    return {};
+}
+
