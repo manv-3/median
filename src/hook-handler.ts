@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { execa } from 'execa';
 import { extractGoalFromTranscript, extractActiveProjectFromTranscript } from './transcript.js';
 import { runChecks, getWorkspaceDiff } from '../wrapper/checks.js';
 import { evaluateTier0 } from '../decision/tier0.js';
@@ -134,6 +135,28 @@ export async function handleStopHook(payload: StopHookPayload): Promise<StopHook
         return {
             decision: 'allow'
         };
+    }
+
+    // 4. If the goal requested pushing commits, and commits were created, but push requires interactive authentication:
+    if (/\bpush\b/i.test(goal) && checks.buildOk && checks.tests.failed === 0) {
+        try {
+            const { stdout: unpushed } = await execa('git', ['rev-list', 'origin/Main..HEAD'], { cwd: workspacePath });
+            if (unpushed.trim().split('\n').filter(Boolean).length > 0) {
+                try {
+                    await execa('git', ['push', '--dry-run'], {
+                        cwd: workspacePath,
+                        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+                    });
+                } catch {
+                    return {
+                        decision: 'allow',
+                        reason: 'Commits are partitioned and verified locally; awaiting user interactive credentials to push.'
+                    };
+                }
+            }
+        } catch {
+            // ignore
+        }
     }
 
     // 4. Assemble state payload

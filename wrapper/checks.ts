@@ -121,9 +121,24 @@ export async function getWorkspaceDiff(cwd: string = process.cwd()): Promise<str
         if (stdout.trim()) {
             return stdout;
         }
+
         // Also check unstaged untracked or status
         const { stdout: status } = await execa('git', ['status', '--short'], { cwd });
-        return status;
+        if (status.trim()) {
+            return status;
+        }
+
+        // If working directory is clean, inspect recent unpushed commits
+        try {
+            const { stdout: unpushedLog } = await execa('git', ['log', '-p', '-n', '8'], { cwd });
+            if (unpushedLog.trim()) {
+                return unpushedLog.slice(0, 10000);
+            }
+        } catch {
+            // ignore
+        }
+
+        return '';
     } catch {
         return '';
     }
