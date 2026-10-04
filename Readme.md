@@ -67,7 +67,10 @@ Median integrates with Cloudflare's **Clef-Flash** decision model running locall
 
 ### Managing the Clef Daemon
 ```bash
-# Start Clef server in background (runs on port 8000)
+# 1. Download model (~6.48 GB, supports resume)
+npm run download:model
+
+# 2. Start Clef server in background (runs on port 8000)
 ./scripts/clef_daemon.sh start
 
 # Check server status & health
@@ -90,8 +93,11 @@ When Median's plugin hook triggers, it automatically probes `http://127.0.0.1:80
 ### 1. Build Median
 ```bash
 npm install
-npm test
 npm run build
+npm test
+
+# (Optional, for Tier 1 local decision model): Download Clef-Flash GGUF (~6.48 GB)
+npm run download:model
 ```
 
 ### 2. Validate Plugin Configuration
