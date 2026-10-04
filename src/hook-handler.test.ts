@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleStopHook, MAX_HOOK_ITERATIONS } from './hook-handler.js';
-import * as checksModule from '../wrapper/checks.js';
+import * as checksModule from './checks.js';
 import * as transcriptModule from './transcript.js';
 
-vi.mock('../wrapper/checks.js', () => ({
+vi.mock('./checks.js', () => ({
     runChecks: vi.fn(),
     getWorkspaceDiff: vi.fn()
 }));

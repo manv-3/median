@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execa } from 'execa';
 import { extractGoalFromTranscript, extractActiveProjectFromTranscript } from './transcript.js';
-import { runChecks, getWorkspaceDiff } from '../wrapper/checks.js';
+import { runChecks, getWorkspaceDiff } from './checks.js';
 import { evaluateTier0 } from '../decision/tier0.js';
 import { tier1Judge } from '../decision/tier1.js';
 import type { StatePayload } from '../types/index.js';

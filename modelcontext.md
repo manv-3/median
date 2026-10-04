@@ -1,89 +1,107 @@
-# Model Context: Cloudflare Clef
+# Model Context: Cloudflare Clef-Flash System One
 
-Everything about the decision model behind Tier 1: what it is, how this project uses it, its advantages over Laya, and API specifications.
+This document details the machine learning architecture, runtime engine, and inference protocol powering **Tier 1 (Semantic Quality Gate)** in Median.
 
 ---
 
-## 1. What Clef Is
+## 1. What Clef-Flash Is
 
-- An open-weight decision model family released by Cloudflare on October 1, 2026, hosted on **Cloudflare Workers AI**.
-- Unlike traditional text-generating LLMs, Clef is a **System-1 decision model**: it takes a structured state input and a set of predefined typed questions (`noul`, `choice`, `score`), returning calibrated probabilities.
-- Available model variants:
-  - `@cf/cloudflare/clef-flash` (9B parameters): Optimized for ultra-low latency (<40ms), ideal for agentic decision loops. **(Default)**
-  - `@cf/cloudflare/clef` (27B parameters): Prioritized for maximum accuracy on nuanced semantic decisions.
-- Massive context window: **65,536 tokens** (compared to Laya's 512 tokens). Full code diffs, prompts, and requirements fit comfortably without aggressive truncation.
+**Clef-Flash** is an open-weight decision model family released by Cloudflare on October 1, 2026.
+Unlike traditional text-generating LLMs that produce conversational prose or code completions token-by-token, Clef-Flash is a **System One Decision Model**:
+- It accepts a structured state description (user goal, code diff, verified requirements).
+- It scores predefined typed decision questions (`noul`, `choice`, `score`).
+- It outputs calibrated mathematical probabilities in a single forward pass without autoregressive text generation.
 
-**History**: Median originally used Jev (TypeSafe AI), then switched briefly to Laya (Convai Innovations). The project has now moved to Cloudflare Clef for vastly superior context capacity (64k vs 512 tokens), sub-40ms latency, and zero native ONNX binary download dependencies.
+### Key Specifications:
+- **Base Architecture:** Qwen3.5-9B multimodal backbone paired with a joint decision head.
+- **Model Checkpoint:** `ggml-org/Clef-Flash-GGUF` (`Clef-Flash-Q4_K_M.gguf`, 6.49 GB, 587 tensors).
+- **Context Window:** **65,536 tokens** (allowing large multi-file diffs and task specifications without lossy truncation).
+- **Inference Latency:** ~25ms – 45ms median forward-pass time on local GPU.
+- **VRAM Footprint:** ~5.2 – 5.5 GB in 4-bit medium quantization, fitting comfortably on consumer 6GB GPUs (RTX 3050/4060) and Apple Silicon.
 
 ---
 
 ## 2. Role in Median (Tier 1 Semantic Judge)
 
-Clef powers **Tier 1** only:
-- Tier 0 (deterministic TypeScript rules) handles mechanical checks (builds, tests, linter, TypeScript compiler).
-- Clef is invoked **only when Tier 0 flags `ambiguous: true`**: tests and builds are green, but confirmation is needed that the code diff genuinely satisfies the user's goal rather than being an empty stub or no-op.
+In Median's two-tier architecture, Clef-Flash is invoked **only when Tier 0 flags `ambiguous: true`**:
+1. When builds or unit tests fail, Tier 0 rejects completion instantly without calling the model.
+2. When builds and tests pass, Tier 0 checks if semantic fulfillment must be confirmed (e.g. non-empty diff, complex task).
+3. If confirmation is needed, Clef-Flash evaluates whether the code diff genuinely satisfies the user's requested goal, catching empty stubs, mock passes, and omitted requirements.
 
 ---
 
-## 3. The `noul` Primitive
+## 3. The `noul` Primitive & Scoring Protocol
 
-Clef evaluates a single `noul` question:
-- **Input**:
-  - `goal`: User prompt / task requirement.
-  - `diff`: Git diff or modified workspace code.
-  - `verifiedRequirements`: Known requirements or test specifications.
-- **Question**:
-  ```json
-  {
+Clef evaluates a single `noul` question posted to `/v1/systemone`:
+
+### Request Shape
+```json
+{
+  "state": {
+    "goal": "Implement JWT authentication middleware with unit tests",
+    "diff": "diff --git a/src/middleware/jwt.ts b/src/middleware/jwt.ts ...",
+    "verifiedRequirements": ["jwt.sign", "jwt.verify", "handle expired tokens"]
+  },
+  "questions": {
     "satisfied": {
       "type": "noul",
-      "instructions": "Determine whether the code diff genuinely implements the stated goal. Answer false if the goal describes behavior that the diff does not actually implement or if it is merely an empty stub.",
+      "instructions": "Determine whether the code diff genuinely implements the stated goal. Answer false if the code diff omits required functionality or contains empty stubs.",
       "criteria": {
         "true": "The code diff correctly satisfies and implements the requested goal.",
         "false": "The code diff does not implement the requested goal or only partially implements it."
       }
     }
   }
-  ```
-- **Output**: Returns a calibrated probability (`noul` between 0 and 1) that the goal is genuinely satisfied.
-  - If `noul > 0.90`: Decision is `done`.
-  - If `noul <= 0.90`: Decision is `refine` with a targeted fix instruction.
+}
+```
+
+### Response Shape
+```json
+{
+  "answers": {
+    "satisfied": {
+      "type": "noul",
+      "noul": 0.9388
+    }
+  },
+  "usage": {
+    "prompt_tokens": 420,
+    "completion_tokens": 0
+  }
+}
+```
+
+### Calibrated Thresholds ([`decision/tier1.ts`](decision/tier1.ts))
+- **`RAW_DONE_THRESHOLD = 0.90`**:
+  - `noul >= 0.90`: Goal is satisfied (`phase: 'done'`). Hook returns `{ decision: "allow" }`.
+  - `noul < 0.90`: Goal is incomplete (`phase: 'refine'`). Hook returns `{ decision: "continue", reason: "Clef score: 0.XX..." }`.
+- **Hysteresis Dead-Band `[0.85, 0.90]`**: A score within this band immediately following an accepted iteration is retained as `done` to prevent oscillation.
 
 ---
 
-## 4. Deployment Modes: Local Hugging Face vs Cloudflare Workers AI
+## 4. Local Runtime Engine: Prebuilt `llama-server`
 
-Median supports **both** local open-source inference and hosted Cloudflare Workers AI:
+Median deploys Clef-Flash locally via a dedicated `llama-server` binary:
 
-### Option A: Local Hugging Face Model (100% Offline & Free)
-The model weights are available directly on Hugging Face:
-- `Cloudflare/clef-flash` (9B parameters, Apache-2.0)
-- `Cloudflare/clef` (27B parameters, Apache-2.0)
-
-You can run the included local server:
 ```bash
-# 1. Install dependencies
-pip install torch transformers fastapi uvicorn accelerate
-
-# 2. Start the local Clef server
-python scripts/clef_local_server.py --model Cloudflare/clef-flash --port 8000
+# Manage daemon via helper script:
+./scripts/clef_daemon.sh start    # Starts daemon on port 8000
+./scripts/clef_daemon.sh status   # Queries http://127.0.0.1:8000/health
+./scripts/clef_daemon.sh logs     # Follows real-time inference logs
+./scripts/clef_daemon.sh stop     # Stops daemon
 ```
 
-Then configure Median to use your local server (no API keys required):
-```bash
-export CLEF_ENDPOINT="http://localhost:8000/run"
-```
+### Auto-Discovery & Zero-Config Fallback
+When Median's hook runs, it automatically checks `http://127.0.0.1:8000/health`. If the server is live, decisions route through `/v1/systemone`. If the server is offline or unreachable, Median logs an informational skip and falls back gracefully to Tier 0 mechanical checks without failing or blocking the agent.
 
 ---
 
-### Option B: Cloudflare Workers AI (Serverless Edge)
-If you don't want to run a 9B model locally on your GPU, you can invoke Cloudflare's hosted endpoint:
+## 5. Cloudflare Workers AI (Cloud Fallback)
+
+If local GPU acceleration is unavailable, Median can be configured to query Cloudflare Workers AI edge:
 
 ```bash
 export CLOUDFLARE_ACCOUNT_ID="your_account_id"
 export CLOUDFLARE_API_TOKEN="your_workers_ai_token"
-export CLEF_MODEL="@cf/cloudflare/clef-flash" # or "@cf/cloudflare/clef"
+export CLEF_MODEL="@cf/cloudflare/clef-flash"
 ```
-
-If neither is configured, Median gracefully defaults to Tier 0 mechanical checks and allows completion without crashing.
-

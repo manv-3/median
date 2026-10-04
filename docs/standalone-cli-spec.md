@@ -1,35 +1,49 @@
-# Standalone AGY CLI Spec
+# Historical Specification: Standalone AGY CLI Wrapper (Superseded)
 
-## Goal
-Build a small standalone CLI around `agy` that takes one goal, runs `agy` in its native non-interactive mode, checks the result, and either returns the result or writes an escalation report.
+> [!NOTE]
+> **Status: SUPERSEDED**
+> This document records the initial prototype specification for Median when it was envisioned as an external CLI wrapper around `agy`. Median has since transitioned to a **native Antigravity Plugin** using lifecycle hooks (`Stop`). This file is preserved for historical reference and architectural traceability.
 
-## What it is not
-- It is not a plugin inside `agy`.
-- It is not a new `agy` subcommand.
-- It is not a general agent framework.
+---
 
-## User flow
-1. The user runs the CLI with a task goal.
-2. The CLI calls `agy --print "<goal>" --output-format text`.
-3. The CLI runs local checks on the output.
-4. If the result looks good, the CLI prints the final code.
-5. If the result is broken, the CLI retries with a focused fix instruction.
-6. After a small retry limit, the CLI writes an escalation report instead of guessing.
+## 1. Initial Prototype Concept
 
-## Core behavior
-- Use `agy` as the code generator.
-- Keep the command-line interface minimal.
-- Keep verification local and deterministic where possible.
-- Make failures visible and recoverable.
-- Prefer clear exit codes over hidden side effects.
+The original goal was to build a standalone command-line wrapper (`median "<goal>"`) that would:
+1. Accept a user goal from the terminal.
+2. Spawn `agy` as a child process using `agy --print "<goal>" --output-format text`.
+3. Capture the output and execute deterministic build and test checks.
+4. If checks failed, run an external loop re-invoking `agy` with fix instructions up to a retry cap (4 iterations).
+5. If still failing, write an escalation report to disk.
 
-## Initial scope
-- One goal in, one verified result out.
-- Verbose mode for debugging.
-- Escalation output when retries fail.
-- A simple test suite for the wrapper behavior.
+---
 
-## Future options
-- Add smarter checks.
-- Add richer retry instructions.
-- Add benchmarking later, after the CLI is stable.
+## 2. Why the Outer CLI Model Was Deprecated
+
+During development and testing, several severe architectural limitations of the external wrapper approach emerged:
+
+1. **Subprocess Overhead & Lost Conversation Context**:
+   - Spawning `agy` repeatedly via `execa` treated each iteration as a cold, stateless one-shot generation.
+   - The agent lost its intermediate scratchpad, tool call history, and active thought process between iterations.
+
+2. **Inverted Architecture (Outside-In vs Inside-Out)**:
+   - Antigravity already has an internal agentic loop and rich lifecycle hook system (`hooks.json`).
+   - Running an outer loop outside `agy` duplicated Antigravity's own orchestrator and prevented integration with IDEs or interactive chat sessions.
+
+3. **Poor User Experience**:
+   - Users had to run a separate binary (`median`) instead of using their standard `agy` CLI or Antigravity IDE workflow.
+   - It broke native features like interactive subagents, slash commands, and multi-workspace support.
+
+---
+
+## 3. Transition to the Native Plugin Architecture
+
+By transforming Median into an **Antigravity Plugin**:
+
+| Feature | Legacy Wrapper Spec | Modern Plugin Architecture |
+| :--- | :--- | :--- |
+| **Execution Point** | Outer process wrapping `agy` | Registered lifecycle hook (`Stop`) inside `agy` |
+| **Retry Mechanism** | Node.js `while` loop spawning `execa` | Antigravity native `{ "decision": "continue" }` rejection |
+| **Context Retention** | Lost across process restarts | Preserved seamlessly in active agent session |
+| **Diagnostics** | Written to external `escalation/` files | Injected directly into live agent context |
+| **UI Compatibility** | Terminal-only CLI script | Works in `agy` CLI, Antigravity IDE, & background tasks |
+| **Verification Gate** | Tier 0 checks only | Two-Tier: Tier 0 Deterministic + Tier 1 Clef-Flash |

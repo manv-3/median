@@ -1,36 +1,87 @@
-# AGY CLI Notes
+# Antigravity (AGY) Plugin & Lifecycle Hook Integration Notes
 
-## Availability
-- Executable: `agy` (`agy.exe`)
-- Installed path: `C:\Users\mvs35\AppData\Local\agy\bin\agy.exe` (on PATH)
-- Version: 1.2.16
+This document details the interface and interaction mechanisms between **Google Antigravity (`agy`)** and the **Median** plugin.
 
-## Invocation
-- Exact command: `agy --print "<prompt>" --output-format text`
-- Prompt flag: `--print` (aliases: `-p`, `--prompt`)
-- Note: There is NO `agy run` subcommand. Invocation uses top-level flags.
+---
 
-## Non-interactive execution
-- Supported: Yes, natively via `--print` / `-p` / `--prompt`.
-- How confirmed: Executed live in terminal with prompt `agy --print "Reply with exactly: AGY_TEST_OK" --output-format text`. Exited cleanly and returned `AGY_TEST_OK` on stdout.
+## 1. Antigravity Plugin Architecture
 
-## Working directory
-- Behavior: Inherits current working directory of child process (`execa` default).
+Rather than executing `agy` as an external subprocess, Median integrates natively into Antigravity via the **Antigravity Plugin System**:
 
-## Output
-- stdout: Formatted raw text when `--output-format text` is supplied.
-- stderr: Captured as string on error.
+- **Plugin Discovery Locations**:
+  - Global: `~/.gemini/config/plugins/<plugin-name>`
+  - Project-specific: `.agents/plugins/<plugin-name>`
+- **Plugin Validation**:
+  ```bash
+  agy plugin validate /path/to/plugin
+  ```
+  Validates `plugin.json`, `hooks.json`, skills, rules, and command registrations.
 
+---
 
-## Exit codes
-- Success: `0`
-- Failure: `1` (e.g. invalid flags or execution failure).
+## 2. The `Stop` Lifecycle Hook
 
-## Timeout
-- Native timeout: `--print-timeout` available (default 0s = wait until complete).
-- Wrapper timeout: Handled via `execa` with `120000` ms (2 minutes).
+Antigravity defines lifecycle events that plugins can intercept. Median utilizes the **`Stop` hook**:
 
-## Real Test Execution
-- Test prompt: `agy --print "Reply with exactly: AGY_TEST_OK" --output-format text`
-- Result: Exited 0, returned response `AGY_TEST_OK`.
-- Tested live via the CLI integration (`wrapper/cli.ts`) and unit tests natively.
+### Trigger Event
+Fired whenever an Antigravity agent attempts to conclude its trajectory (via `model_stop` or task completion).
+
+### Communication Protocol
+- **Transport**: Standard I/O (stdin / stdout).
+- **Timeout**: Configurable in `hooks.json` (Median sets 60 seconds).
+- **Input (stdin)**: Antigravity serializes the execution state into a JSON object:
+  ```json
+  {
+    "executionNum": 0,
+    "terminationReason": "model_stop",
+    "workspacePaths": ["/path/to/project"],
+    "transcriptPath": "/path/to/transcript.jsonl",
+    "conversationId": "...",
+    "fullyIdle": true
+  }
+  ```
+- **Output (stdout)**: Median must return a JSON response adhering to `StopHookResponse`:
+  ```json
+  {
+    "decision": "continue",
+    "reason": "Median Quality Gate Failure: Tests failed (1/3 passed). Fix the failing test in tests/auth.test.ts"
+  }
+  ```
+  or:
+  ```json
+  {
+    "decision": "allow"
+  }
+  ```
+
+### Agent Self-Correction Behavior
+When `{ "decision": "continue" }` is emitted:
+1. Antigravity prevents the agent from terminating.
+2. The `reason` string is injected directly into the agent's active conversation context as a high-priority system notification.
+3. The agent resumes execution, analyzes the failure description, and issues code edits or test updates to address the defect.
+
+---
+
+## 3. Rules & Skills Integration
+
+1. **Agent Quality Standards ([`rules/AGENTS.md`](../rules/AGENTS.md))**:
+   - Placed in the `rules/` directory of the plugin.
+   - Automatically appended to the agent's system prompt whenever the plugin is active.
+   - Instructs the agent to verify code before attempting to stop and to strictly heed Median's quality gate rejections.
+
+2. **On-Demand Skill ([`skills/median-verify/SKILL.md`](../skills/median-verify/SKILL.md))**:
+   - Exposes `median-verify` as an available skill.
+   - Allows agents or users to run quality gate checks proactively during task execution rather than only waiting for the final `Stop` hook.
+
+---
+
+## 4. Plugin Management Commands
+
+```bash
+# Validate plugin structure
+agy plugin validate /home/ms/median
+
+# Enable / Disable plugin globally
+agy plugin enable median
+agy plugin disable median
+```

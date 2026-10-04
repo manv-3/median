@@ -1,128 +1,176 @@
-# Integrating Cloudflare Clef-Flash with the Median Plugin
+# Median Plugin Integration & Operation Guide
 
-This guide explains how Cloudflare's **Clef-Flash** decision model is integrated into the **Median** Antigravity plugin, how to operate it, and how it enforces code quality.
-
----
-
-## 1. Overview
-
-**Median** acts as an autonomous quality gate for `agy` coding agents. Rather than relying solely on deterministic checks (syntax, builds, unit tests), Median uses a two-tier evaluation standard:
-
-- **Tier 0 (Deterministic Gate)**: Evaluates exit codes from `npm run build`, `npm test` / `vitest`, `tsc --noEmit`, and linters.
-- **Tier 1 (Semantic Clef Decision Gate)**: Evaluates whether the workspace code diff genuinely implements the user's requested goal (eliminating empty stubs, mock passes, or omitted requirements).
+This guide provides a comprehensive technical overview of **Median** as an Antigravity Plugin, explaining how it intercepts agent completion attempts, evaluates code quality via deterministic checks and Cloudflare's Clef-Flash decision model, and communicates with the agent.
 
 ---
 
-## 2. Clef-Flash Architecture
+## 1. Architectural Philosophy: Inversion of Control
 
-- **Model**: `ggml-org/Clef-Flash-GGUF` (`Clef-Flash-Q4_K_M.gguf`, 6.49 GB, 587 tensors).
-- **Engine**: Prebuilt `llama-server` (build 11396) running with native `/v1/systemone` System One typed decision API support.
-- **Decision Mode**: Single forward-pass probability scoring (`noul`) without free-form text generation or output hallucination.
+Earlier prototypes of Median attempted to wrap `agy` from the outside (executing `agy` as a child process in a loop). Median has evolved into a native **Antigravity Plugin**:
 
----
-
-## 3. Server Management
-
-Median includes a daemon management script:
-
-```bash
-# Check if Clef server is running
-./scripts/clef_daemon.sh status
-
-# Start Clef server in background
-./scripts/clef_daemon.sh start
-
-# Follow real-time decision logs
-./scripts/clef_daemon.sh logs
-
-# Stop Clef server
-./scripts/clef_daemon.sh stop
-```
+- **Host Process**: `agy` (or Antigravity IDE) runs as the host environment.
+- **Plugin Role**: Median is loaded into `agy` via standard plugin discovery (`hooks.json`, `rules/AGENTS.md`, `skills/median-verify/`).
+- **Control Mechanism**: Antigravity executes Median's `Stop` lifecycle hook whenever an agent attempts to stop (`model_stop`).
+- **Self-Correction Loop**: When checks fail, Median returns `{ "decision": "continue", "reason": "<instructions>" }`. Antigravity's internal planner receives this rejection and commands the agent to self-correct within the live conversation trajectory.
 
 ---
 
-## 4. How the Plugin Intercepts Antigravity Agents
+## 2. Plugin Structure & Discovery
 
-1. **Registration**:
-   [`hooks.json`](file:///home/ms/median/hooks.json) registers the `Stop` lifecycle hook:
-   ```json
-   {
-     "hooks": {
-       "Stop": [
-         {
-           "command": "node dist/bin/hook.js",
-           "type": "command"
-         }
-       ]
-     }
-   }
-   ```
+Median follows the official Antigravity plugin layout:
 
-2. **Execution**:
-   Whenever an agent tries to conclude a task (`model_stop`), Antigravity executes `dist/bin/hook.js`:
-   - `handleStopHook` in [`src/hook-handler.ts`](file:///home/ms/median/src/hook-handler.ts) executes.
-   - It runs workspace checks (`runChecks`).
-   - If checks pass, it evaluates Tier 1 via `tier1Judge` in [`decision/tier1.ts`](file:///home/ms/median/decision/tier1.ts).
-   - If Clef returns `noul > 0.90`, the hook permits completion (`{"decision": "allow"}`).
-   - If Clef returns `noul <= 0.90`, the hook blocks completion (`{"decision": "continue"}`) and injects Clef's targeted fix instruction into the agent's context.
+```
+median/
+├── plugin.json                 # Plugin manifest (name, description)
+├── hooks.json                  # Hook registration (Stop lifecycle hook)
+├── bin/
+│   └── hook.ts                 # CLI entry point for the Stop hook (reads stdin, outputs stdout)
+├── src/
+│   ├── hook-handler.ts         # Hook logic, transcript parsing, bypasses, checks orchestration
+│   ├── transcript.ts           # Goal extraction & active project detection from transcript
+│   ├── checks.ts               # Tier 0 workspace build, test, and typecheck runners
+│   └── index.ts                # TypeScript SDK exports
+├── decision/
+│   ├── tier0.ts                # Tier 0 deterministic scoring & ambiguity detection
+│   └── tier1.ts                # Tier 1 Clef-Flash client (System One typed API)
+├── rules/
+│   └── AGENTS.md               # Quality rules automatically injected into the agent system prompt
+├── skills/
+│   └── median-verify/          # On-demand verification skill for agent planning
+├── scripts/
+│   ├── clef_daemon.sh          # Background daemon management script for Clef-Flash
+│   └── download_clef_gguf.sh   # Automated GGUF model downloader
+└── models/
+    └── Clef-Flash-Q4_K_M.gguf  # 4-bit quantized Clef-Flash model weights
+```
 
-3. **Auto-Discovery**:
-   Median automatically checks `http://127.0.0.1:8000/health`. If the local Clef daemon is running, it routes decisions to `http://127.0.0.1:8000/v1/systemone`. No environment variables are required.
+### Manifests:
+- **`plugin.json`**:
+  ```json
+  {
+    "name": "median",
+    "description": "Two-tier autonomous quality gate and verification engine for Antigravity"
+  }
+  ```
+- **`hooks.json`**:
+  ```json
+  {
+    "median-quality-gate": {
+      "Stop": [
+        {
+          "type": "command",
+          "command": "node ./dist/bin/hook.js",
+          "timeout": 60
+        }
+      ]
+    }
+  }
+  ```
 
 ---
 
-## 5. Enabling & Disabling Median Manually
+## 3. The Stop Hook Lifecycle
 
-You can toggle or bypass Median at multiple levels depending on your workflow:
+### Input Payload (stdin)
+Antigravity passes the execution state to `dist/bin/hook.js` over `stdin` as JSON:
 
-### A. Inline in Prompts / Chat (Per Task)
-Add `--no-median`, `[skip-median]`, or `(no-median)` directly to any task or question:
-```bash
-agy "Generate a scratch demo script --no-median"
-```
-Or in the chat interface:
-> *"Write a quick draft [skip-median]"*
-
-### B. Per Terminal Session (Environment Variable)
-Disable Median for your current shell:
-```bash
-export MEDIAN_DISABLED=1
-```
-Re-enable it anytime:
-```bash
-unset MEDIAN_DISABLED
-```
-Or for a single one-off command:
-```bash
-MEDIAN_DISABLED=1 agy "quick task without quality gate"
+```json
+{
+  "executionNum": 0,
+  "terminationReason": "model_stop",
+  "workspacePaths": ["/home/ms/my-project"],
+  "transcriptPath": "/home/ms/.gemini/antigravity-cli/brain/.../transcript.jsonl",
+  "conversationId": "...",
+  "fullyIdle": true
+}
 ```
 
-### C. Per Project Workspace (Flag File)
-To permanently bypass Median in a quick scratch or prototype repository:
-```bash
-touch .nomedian
-```
-Delete `.nomedian` when you are ready to enforce quality checks.
+### Handler Workflow (`src/hook-handler.ts`)
+1. **Bypass Checks**:
+   - Environment variable `MEDIAN_DISABLED=1`.
+   - File flag `.nomedian` in the target workspace.
+   - Command-line prompt bypass flags (`--no-median`, `[skip-median]`, `(no-median)`).
+   - Informational query detection (e.g., questions asking "explain", "how do I", "status", etc., which do not alter code).
+2. **Active Project Detection**:
+   - If `workspacePaths` contains a generic root (such as `/home/user`), Median parses `transcript.jsonl` to locate the actual project directory being modified (e.g., `/home/user/my-project`).
+3. **Loop Safety**:
+   - Tracks consecutive rejections in the session. If `executionNum >= 4`, Median permits completion with an advisory note to prevent infinite loops.
+4. **Tier 0 Deterministic Checks (`src/checks.ts`)**:
+   - Checks `npm run build` or `tsc --noEmit`.
+   - Checks `npm test` / `vitest` pass/fail status.
+   - Counts TypeScript compiler errors.
+   - If any check fails, returns `{ "decision": "continue", "reason": "Median Quality Gate Failure: ..." }`.
+5. **Tier 1 Clef Decision Engine (`decision/tier1.ts`)**:
+   - Evaluates whether the workspace git diff genuinely satisfies the user's goal.
+   - Auto-discovers local `llama-server` on `http://127.0.0.1:8000`.
+   - Queries `http://127.0.0.1:8000/v1/systemone` using the `noul` primitive.
+   - If `noul > 0.90`, returns `{ "decision": "allow" }`.
+   - If `noul <= 0.90`, returns `{ "decision": "continue", "reason": "Goal fulfillment requirement not satisfied..." }`.
 
-### D. Globally via `agy` CLI
+---
+
+## 4. Cloudflare Clef-Flash Integration
+
+Median integrates with Cloudflare's **Clef-Flash** (9B parameter model tuned for System One decision-making).
+
+### Daemon Management
+The local daemon is managed with `scripts/clef_daemon.sh`:
 ```bash
-agy plugin disable median   # Disable globally across all workspaces
-agy plugin enable median    # Re-enable globally
+./scripts/clef_daemon.sh start    # Starts llama-server in background
+./scripts/clef_daemon.sh status   # Checks health on port 8000
+./scripts/clef_daemon.sh logs     # Follows decision logs
+./scripts/clef_daemon.sh stop     # Gracefully shuts down the daemon
+```
+
+### Native `/v1/systemone` Schema
+Clef evaluates decisions in a single forward pass without generating free-form tokens:
+
+```json
+{
+  "state": {
+    "goal": "Add JWT authentication to login route",
+    "diff": "diff --git a/auth.ts b/auth.ts ...",
+    "verifiedRequirements": ["jwt.sign", "jwt.verify"]
+  },
+  "questions": {
+    "satisfied": {
+      "type": "noul",
+      "instructions": "Determine whether the code diff genuinely implements the stated goal.",
+      "criteria": {
+        "true": "The code diff correctly satisfies and implements the requested goal.",
+        "false": "The code diff does not implement the requested goal or only partially implements it."
+      }
+    }
+  }
+}
+```
+
+Response:
+```json
+{
+  "answers": {
+    "satisfied": {
+      "type": "noul",
+      "noul": 0.9421
+    }
+  }
+}
 ```
 
 ---
 
-## 6. Verification
+## 5. Verification & Testing
 
-To verify the entire pipeline:
+Validate the plugin before installation:
+
 ```bash
-# 1. Build and test Median
-npm run build
+# 1. Unit tests & type checking
 npm test
+npm run build
 
-# 2. Validate plugin registration with agy
+# 2. Antigravity plugin validation
 agy plugin validate /home/ms/median
 
-# 3. Test hook directly
+# 3. Direct hook simulation
 echo '{"executionNum": 0, "workspacePaths": ["/home/ms/median"]}' | node dist/bin/hook.js
 ```
