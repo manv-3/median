@@ -1,6 +1,8 @@
 # Project Context: Antigravity CLI + Decision Layer (Laya)
 
-The full project brief. Last updated after two changes: the switch from Jev (TypeSafe AI) to Laya (Convai Innovations) as the decision-layer model, and the rebalancing of the team split around Laya dependency. Still before build-order Step 1 (tool verification) has been run.
+This file preserves the earlier decision-layer background for reference. The active target for the repo is now the standalone CLI described in [docs/standalone-cli-spec.md](docs/standalone-cli-spec.md).
+
+The older brief below is kept as historical context. It was last updated after two changes: the switch from Jev (TypeSafe AI) to Laya (Convai Innovations) as the decision-layer model, and the rebalancing of the team split around Laya dependency. Still before build-order Step 1 (tool verification) has been run.
 
 > **Naming note:** the project was originally scoped around a hosted product called **Jev**. Its role, the fast typed decision layer, is unchanged; only the underlying model swapped to **Laya**, a self-hosted open-weight alternative. Code, folders, or notes that say `jev` should be read as the decision layer generally.
 
@@ -8,11 +10,11 @@ Related docs: `modelcontext.md` (the Laya model), `split.md` (ownership), `detai
 
 ## 1. The problem
 
-`agy` (Antigravity CLI) is currently one-shot: it takes a prompt, generates code, and stops. If there's a bug or a missed requirement, a human has to read the logs and manually re-prompt it. We're building a wrapper that closes that loop automatically.
+`agy` (Antigravity CLI) supports non-interactive `--print` execution, but it still behaves like a one-shot generator: it takes a prompt, generates code, and stops. If there's a bug or a missed requirement, a human has to read the logs and manually re-prompt it. We're building a wrapper that closes that loop automatically.
 
 ## 2. What we're building
 
-A **closed-loop agentic wrapper** around `agy`, using a second, lightweight system, the decision layer (backed by Laya), to check results and drive corrections.
+A **closed-loop agentic wrapper** around `agy`, built on `agy`'s native non-interactive `--print` mode, using a second, lightweight system, the decision layer (backed by Laya), to check results and drive corrections.
 
 1. The user gives a prompt to the wrapper.
 2. The wrapper runs `agy` and captures the generated code and any stdout/stderr.

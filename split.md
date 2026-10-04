@@ -24,7 +24,7 @@ Grouping by dependency removes that. Track A's surface shrinks to three function
 |---|---|---|
 | `types/index.ts` | Both | The only shared file. Changes go through a PR reviewed by both. |
 | `types/laya.d.ts` | B | Unverified. Replace or delete after Step 1. |
-| `wrapper/agy.ts` | A | Real command and flags, non-interactive mode, output parsing, timeout, failure classification. |
+| `wrapper/agy.ts` | A | Real command and flags, agy's native non-interactive mode, output parsing, timeout, failure classification. |
 | `wrapper/checks.ts` | A | Build, test, lint, and tsc runners producing a `Checks` object. |
 | `wrapper/cli.ts` | A | Entry point. Wires all pieces together; imports B's `tier0`, `tier1`, and `loop`. |
 | `wrapper/escalation.ts` | A | Writes the escalation report files. |

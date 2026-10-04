@@ -95,51 +95,40 @@ The shared contract. Nothing here calls `agy` or a model.
 ## 3. `wrapper/`
 
 ### `wrapper/loop.ts` (✅, owner B)
-The state machine. **Exports:** `runClosedLoop(goal, deps)` and the types `LoopDeps`, `LoopResult`, `IterationLog`.
+The standalone retry loop. **Exports:** `runClosedLoop(goal, deps)` and the types `LoopDeps`, `LoopResult`, `IterationLog`.
 
-**Constants (the enforced guardrails):**
+**Constants:**
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `MAX_ITERATIONS` | 4 | Hard cutoff |
-| `DONE_THRESHOLD` | 0.90 | Probability must be strictly greater |
-| `HYSTERESIS_FLOOR` | 0.85 | Lower edge of the dead-band |
-| `STUCK_AFTER_REPEATS` | 2 | Consecutive repeats of one error signature before stopping |
+| `MAX_ITERATIONS` | 4 | Hard retry limit |
 
-**`LoopDeps`:** the four functions the loop needs (`runAgy`, `runChecks`, `evaluateTier0`, `tier1Judge`), injected rather than imported. This lets `loop.test.ts` use instant fakes instead of a real `agy` binary, which would make every test slow and require `agy` installed.
+**`LoopDeps`:** the single function the loop needs, `runAgy(prompt)`. Tests inject a fake `runAgy` so the loop can be verified without calling the real CLI.
 
 **Order of operations, every iteration:**
-1. Run `agy` (the goal on the first pass, the previous fix instruction afterwards).
-2. If `failureClass === 'environment'`, escalate as `environment_error` immediately. `runChecks` is never called.
-3. Run `runChecks` on the current code.
-4. Compute `errorSignature` with `signatureOf()`, which strips line and column numbers (regex `/:\d+:\d+/g`) so the same error at different positions counts as the same signature.
-5. Assemble the `StatePayload` and call `evaluateTier0`.
-6. If `decision.ambiguous`, call `tier1Judge`. Only then.
-7. Stuck detection: if `errorSignature === previousErrorSignature`, increment the repeat count; at `STUCK_AFTER_REPEATS` (2), escalate as `stuck`. This can trigger on the third iteration, before the cap.
-8. Hysteresis: only acts if the previous phase was `done` and the score is in `[0.85, 0.90]`, holding the result as `done`. It cannot act on iteration 0, and it can never push a bad result into `done`.
-9. Enforcement: return `done` only if `phase === 'done'` AND `(passingProbability ?? score) > 0.90`. A score of exactly 0.90 does not pass.
-10. Track `bestSoFar` by score. After 4 iterations, escalate as `max_iterations` with `bestSoFar`, so the report holds the closest attempt, not necessarily the last.
+1. Run `agy` with the current prompt.
+2. If `failureClass === 'environment'`, stop immediately and return an escalation report.
+3. Treat a non-empty stdout string with exit code `0` as success.
+4. If the output is empty or the exit code is non-zero, build a focused retry prompt that includes the prior stderr/stdout.
+5. Retry up to four times.
+6. If the loop never gets a non-empty successful result, escalate with the best output it saw.
 
-**Breaks without it:** there is no loop; `cli.ts` has nothing to run.
+**Breaks without it:** there is no retry policy; `cli.ts` has nothing to run.
 
 ### `wrapper/loop.test.ts` (✅, owner B)
-Seven vitest cases, each exercising one exit path with mocked `LoopDeps`:
+Three vitest cases, each exercising one exit path with mocked `runAgy`:
 
 | # | Proves |
 |---|---|
-| 1 | Returns `done` on iteration 1 when checks and score pass, and `tier1Judge` is **not** called (the cost-control property). |
-| 2 | With a mock that always fails, the loop stops at exactly 4 iterations and escalates as `max_iterations`. |
-| 3 | The same error repeating escalates as `stuck` in fewer than 4 iterations. |
-| 4 | An `environment` failure stops immediately and `runChecks` is never called. |
-| 5 | When Tier 0 flags ambiguity, `tier1Judge` is called exactly once and can resolve to `done`. |
-| 6 | Tier 1 can also fail repeatedly across all 4 iterations, and the loop escalates. Together with #5, this shows Tier 1 works in both directions. |
-| 7 | Hysteresis holds a `done` result through one iteration where the score dips just below 0.90. |
+| 1 | A non-empty stdout result with exit code 0 returns success on the first iteration. |
+| 2 | An empty result retries until the four-attempt limit and escalates. |
+| 3 | An environment failure stops immediately and writes an escalation report. |
 
 ### `wrapper/agy.ts` (🟡, owner A)
 - **Contains:** `runAgy(prompt)` and `classifyFailure(err)`.
-- **Does:** runs `execa('agy', ['run', '--prompt', prompt], { timeout: 120000 })`. `execa`'s timeout is its own kill switch: on a hang it throws with `.timedOut === true`.
+- **Does:** runs `execa('agy', ['--print', prompt, '--output-format', 'text'])`. `execa`'s timeout is its own kill switch: on a hang it throws with `.timedOut === true`.
 - **`classifyFailure`:** checks `timedOut` first (most specific), then `err.code === 'ENOENT'` or a "command not found" match for `environment`, and defaults everything else to `code_bug` (if `agy` ran and still failed, treat it as a code problem).
-- **TODOs:** the command and flags (`run`, `--prompt`) are plausible guesses, not verified facts. Step 1 exists to close this gap. Output parsing is also unverified.
+- **TODOs:** output parsing is still intentionally simple, but the command and flags are now verified against the native `agy` CLI.
 - **Breaks without it:** the loop has no way to call `agy`.
 
 ### `wrapper/checks.ts` (🟡, owner A)
@@ -150,12 +139,12 @@ Seven vitest cases, each exercising one exit path with mocked `LoopDeps`:
 - **Breaks without it:** the loop cannot produce a `Checks` object, so Tier 0 has nothing to read.
 
 ### `wrapper/cli.ts` (✅, owner A)
-- **Contains:** the entry point, built with `commander`. Takes a goal string and `-v, --verbose`.
-- **Does:** wires `runAgy`, `runChecks`, `evaluateTier0`, and `tier1Judge` into `runClosedLoop`. It is the only file that imports all of them.
-- **With `--verbose`:** prints one line per iteration in the format `[iter N] phase=X score=Y.YY reasons=...`. Without it, only the final outcome prints.
-- **On success:** prints `finalCode` to stdout and exits 0, so it chains in shell scripts (`agy-loop "..." && echo next`).
+- **Contains:** the entry point. Takes a goal string and `-v, --verbose`.
+- **Does:** wires `runAgy` into `runClosedLoop` and writes the escalation report if the loop fails.
+- **With `--verbose`:** prints the goal, the final reason, and the retry count.
+- **On success:** prints the final agy output to stdout and exits 0.
 - **On escalation:** awaits `writeEscalationReport(...)` before `process.exit(1)`. The `await` matters: without it the process can exit before the file write resolves and drop the report.
-- **Ownership note:** owned by A, but it imports B's `tier0`, `tier1`, and `loop`. Review changes to it together.
+- **Ownership note:** this file owns the top-level CLI behavior, so changes to prompt handling or exit codes belong here.
 
 ### `wrapper/escalation.ts` (✅, owner A)
 - **Contains:** `writeEscalationReport(report)` and `toMarkdown()`.
@@ -192,15 +181,15 @@ Deterministic rules. No model, no network, no async. **Exports:** `evaluateTier0
 
 **Helper:** `buildFixInstruction` turns a failure into a specific instruction that names the failing test or quotes the type error, instead of a generic "try again."
 
-### `decision/tier1.ts` (🟡 ⚠️, owner B)
-The Laya semantic judge. **Exports:** `tier1Judge(payload, tier0)`. Only reached when Tier 0 sets `ambiguous: true`.
+### `decision/tier1.ts` (✅, owner B)
+The Clef-flash semantic judge. **Exports:** `tier1Judge(payload, tier0, config?)`, `queryClef`. Only reached when Tier 0 sets `ambiguous: true`.
 
-- **Lazy load:** the first call runs `getModel()`, which dynamically imports `@receptron/laya` and calls `Laya.load('convaiinnovations/laya')`. The promise is cached, so the model loads once per process. Dynamic import keeps startup fast when Tier 1 never fires.
-- **State sent:** only `goal`, `diff`, and `verifiedRequirements`. Errors and full checks are excluded because Tier 1 only runs when they are clean, and they would waste the input budget.
-- **One `noul` question,** instructed to answer false if the goal describes behavior the diff does not implement. This steers it away from the trap Tier 0 can't avoid: treating "tests still pass" as "goal met."
-- **Result:** probability above `RAW_DONE_THRESHOLD` (0.90) → `done`; otherwise `refine` with a generated fix instruction. `reasons` records `tier1 (Laya): noul=0.XX` so raw values are available for calibration.
-- **TODOs:** replace the raw 0.90 with a calibrated threshold (see `modelcontext.md`); confirm the assumed Laya API shape (see `types/laya.d.ts`).
-- **Breaks without it:** Tier 0 alone can never catch code that passes tests but misses the request, which is the project's main reason to exist.
+- **Clef-flash decision model:** Uses Cloudflare's `clef-flash` (9B parameters, 65,536 token context, ~38ms latency).
+- **Execution flexibility:** Supports local Hugging Face execution (`Cloudflare/clef-flash` via `CLEF_ENDPOINT`) or hosted Cloudflare Workers AI (`@cf/cloudflare/clef-flash` via API keys).
+- **State sent:** `goal`, `diff`, and `verifiedRequirements`.
+- **One `noul` question,** instructed to answer false if the goal describes behavior the diff does not implement.
+- **Result:** probability above `RAW_DONE_THRESHOLD` (0.90) → `done`; otherwise `refine` with a generated fix instruction.
+- **Fail-safe:** If neither local endpoint nor cloud credentials are set, it records the notice and safely allows Tier 0's clean result rather than crashing or locking the workflow.
 
 ---
 
