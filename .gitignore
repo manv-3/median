@@ -10,6 +10,7 @@ coverage/
 .llama-bin/
 models/
 *.pid
+.clef_active_model
 
 # Internal planning, specifications, and context docs
 context.md

@@ -65,21 +65,37 @@ User Task ──▶ Antigravity Agent Working
 
 Median integrates with Cloudflare's **Clef-Flash** decision model running locally via `llama-server` in 4-bit GGUF format (`Clef-Flash-Q4_K_M.gguf`, ~5.2 GB VRAM):
 
-### Managing the Clef Daemon
+### Managing the Clef Daemon & Selecting Models
+
+#### 1. Interactive Model Downloader
+Median allows you to choose your desired decision model based on available GPU VRAM:
+
 ```bash
-# 1. Download model (~6.48 GB, supports resume)
+# Interactive selection menu (1-4):
 npm run download:model
 
-# 2. Start Clef server in background (runs on port 8000)
+# Or download specific model directly:
+npm run download:model -- --model 1   # Clef-Flash 9B [Q4_K_M] (~6.48 GB, Recommended for 6GB+ GPUs/CPU)
+npm run download:model -- --model 2   # Clef-Flash 9B [Q8_0]   (~9.80 GB, 12GB+ GPU VRAM)
+npm run download:model -- --model 3   # Clef 27B [Q4_K_M]      (~17.2 GB, 24GB+ GPU VRAM)
+npm run download:model -- --list      # View all available model variants
+```
+
+#### 2. Launching the Decision Server
+```bash
+# Start default or detected model:
 ./scripts/clef_daemon.sh start
 
-# Check server status & health
+# Or specify which model to launch:
+./scripts/clef_daemon.sh start Clef-Flash-Q8_0.gguf
+
+# Check health and active running model:
 ./scripts/clef_daemon.sh status
 
-# Follow real-time decision logs
+# Follow real-time decision logs:
 ./scripts/clef_daemon.sh logs
 
-# Stop server
+# Stop server:
 ./scripts/clef_daemon.sh stop
 ```
 
