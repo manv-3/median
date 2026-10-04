@@ -1,10 +1,7 @@
 /// <reference types="node" />
 import { runAgy } from './agy.js';
-import { runChecks } from './checks.js';
 import { runClosedLoop } from './loop.js';
 import { writeEscalationReport } from './escalation.js';
-import { evaluateTier0 } from '../decision/tier0.js';
-import { tier1Judge } from '../decision/tier1.js';
 
 async function main() {
     const args = process.argv.slice(2);
@@ -20,28 +17,26 @@ async function main() {
 
     const deps = {
         runAgy,
-        runChecks: (code: string) => runChecks(),
-        evaluateTier0,
-        tier1Judge
+        onProgress: verbose ? (msg: string) => console.log(msg) : undefined
     };
 
     if (verbose) {
-        console.log(`Starting loop with goal: "${goal}"`);
+        console.log(`Starting agy workflow with goal: "${goal}"`);
     }
 
     try {
         const result = await runClosedLoop(goal, deps);
 
         if (verbose) {
-            console.log(`Loop finished. Success: ${result.success}, Reason: ${result.reason}`);
+            console.log(`Workflow finished. Success: ${result.success}, Reason: ${result.reason}`);
             console.log(`Iterations: ${result.iterations}, Best Score: ${result.bestScore}`);
         }
 
         if (result.success) {
-            if (result.finalCode) {
-                console.log(result.finalCode);
-            } else if (result.bestCode) {
-                console.log(result.bestCode);
+            if (result.finalOutput) {
+                console.log(result.finalOutput);
+            } else if (result.bestOutput) {
+                console.log(result.bestOutput);
             } else {
                 console.log('Success');
             }

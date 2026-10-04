@@ -39,13 +39,26 @@ describe('runAgy', () => {
 
         expect(execaMock).toHaveBeenCalledWith('agy', [
             '--print', 'my prompt',
-            '--output-format', 'text'
+            '--output-format', 'text',
+            '--dangerously-skip-permissions'
         ], { timeout: 120000 });
         expect(result).toStrictEqual({
             stdout: 'success output',
             stderr: '',
             exitCode: 0,
         });
+    });
+
+    it('normalizes fenced markdown output into plain text', async () => {
+        execaMock.mockResolvedValueOnce({
+            stdout: '```python\ndef greet(name: str = "World") -> str:\n    return f"Hello, {name}!"\n```',
+            stderr: '',
+            exitCode: 0,
+        });
+
+        const result = await runAgy('make a greeting function');
+
+        expect(result.stdout).toBe('def greet(name: str = "World") -> str:\n    return f"Hello, {name}!"');
     });
 
     it('catches non-zero exit code and classifies as code_bug', async () => {
