@@ -6,9 +6,6 @@
   "bin": {
     "median-hook": "dist/bin/hook.js"
   },
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",

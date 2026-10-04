@@ -10,3 +10,12 @@ coverage/
 .llama-bin/
 models/
 *.pid
+
+# Internal planning, specifications, and context docs
+context.md
+details.md
+modelcontext.md
+split.md
+team-split-update.md
+docs/
+scripts/push_commits_one_by_one.sh
